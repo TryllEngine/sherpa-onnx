@@ -1,0 +1,158 @@
+name: tryll-release
+
+# Builds espeak-free (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=ON) Windows x64 packages
+# and uploads them as GitHub Release assets. Consumed by
+# tryll-mono/tryll/cmake/TryllSherpaOnnx.cmake.
+#
+# Package names are derived from the git tag (e.g. v1.13.2-tryll.1):
+#   sherpa-onnx-<tag>-win-x64-shared-MD-Release.tar.bz2
+#   sherpa-onnx-<tag>-win-x64-cuda.tar.bz2
+
+on:
+  push:
+    tags:
+      - 'v*-tryll.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tryll-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: win-x64 ${{ matrix.pkg }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkg: cpu
+            suffix: shared-MD-Release
+          - pkg: cuda
+            suffix: cuda
+            # Same onnxruntime-gpu version v1.13.2's windows-x64-cuda leg uses
+            # for the plain win-x64-cuda package name.
+            onnxruntime_version: "1.17.1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake (CPU)
+        if: matrix.pkg == 'cpu'
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          cmake \
+            -A x64 \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D BUILD_SHARED_LIBS=ON \
+            -D SHERPA_ONNX_ENABLE_TTS=ON \
+            -D SHERPA_ONNX_TTS_WITHOUT_ESPEAK=ON \
+            -D SHERPA_ONNX_USE_STATIC_CRT=OFF \
+            -D SHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
+            -D CMAKE_INSTALL_PREFIX=./install \
+            ..
+
+      - name: Configure CMake (CUDA)
+        if: matrix.pkg == 'cuda'
+        shell: bash
+        run: |
+          onnxruntime_version=${{ matrix.onnxruntime_version }}
+          curl -SL -O https://github.com/microsoft/onnxruntime/releases/download/v$onnxruntime_version/onnxruntime-win-x64-gpu-$onnxruntime_version.zip
+          unzip -q onnxruntime-win-x64-gpu-$onnxruntime_version.zip
+
+          export SHERPA_ONNXRUNTIME_LIB_DIR=$PWD/onnxruntime-win-x64-gpu-$onnxruntime_version/lib
+          export SHERPA_ONNXRUNTIME_INCLUDE_DIR=$PWD/onnxruntime-win-x64-gpu-$onnxruntime_version/include
+
+          mkdir build
+          cd build
+          cmake \
+            -A x64 \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D BUILD_SHARED_LIBS=ON \
+            -D SHERPA_ONNX_ENABLE_TTS=ON \
+            -D SHERPA_ONNX_TTS_WITHOUT_ESPEAK=ON \
+            -D SHERPA_ONNX_ENABLE_GPU=ON \
+            -D SHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
+            -D CMAKE_INSTALL_PREFIX=./install \
+            ..
+
+      - name: Build
+        shell: bash
+        run: |
+          cd build
+          cmake --build . --config Release -- -m:2
+          cmake --build . --config Release --target install -- -m:2
+
+      - name: Package
+        shell: bash
+        run: |
+          # For workflow_dispatch test runs GITHUB_REF_NAME is the branch name;
+          # the package is still built and scanned, just not release-named.
+          tag=${GITHUB_REF_NAME//\//-}
+          dst=sherpa-onnx-${tag}-win-x64-${{ matrix.suffix }}
+
+          mkdir $dst
+          cp -a build/install/bin $dst/
+          cp -a build/install/lib $dst/
+          cp -a build/install/include $dst/
+
+          rm -rf $dst/lib/pkgconfig
+          rm -f $dst/lib/cargs.dll $dst/lib/cargs.lib $dst/include/cargs.h
+
+          ls -lh $dst/lib/
+          tar cjvf ${dst}.tar.bz2 $dst
+
+      - name: eSpeak license gate
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import glob
+          import sys
+
+          markers = [b"espeak_Initialize", b"espeak_TextToPhonemes", b"espeak-ng-data"]
+          files = sorted(
+              glob.glob("sherpa-onnx-*/**/*.dll", recursive=True)
+              + glob.glob("sherpa-onnx-*/**/*.exe", recursive=True)
+          )
+          # Do not scan the downloaded onnxruntime SDK dir, only the package.
+          files = [f for f in files if not f.startswith("onnxruntime-")]
+          if not files:
+              sys.exit("FAIL: no packaged DLL/EXE files found to scan")
+
+          bad = False
+          for path in files:
+              with open(path, "rb") as f:
+                  data = f.read()
+              for m in markers:
+                  if m in data:
+                      print(f"HIT {m.decode()} in {path}")
+                      bad = True
+              print(f"scanned {path}")
+
+          if bad:
+              sys.exit("FAIL: eSpeak markers found in packaged binaries")
+          print("PASS: package is espeak-free")
+          EOF
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-win-x64-${{ matrix.suffix }}
+          path: sherpa-onnx-*-win-x64-*.tar.bz2
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file_glob: true
+          overwrite: true
+          file: sherpa-onnx-*-win-x64-*.tar.bz2
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
