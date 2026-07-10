@@ -118,10 +118,9 @@ jobs:
           import sys
 
           markers = [b"espeak_Initialize", b"espeak_TextToPhonemes", b"espeak-ng-data"]
-          files = sorted(
-              glob.glob("sherpa-onnx-*/**/*.dll", recursive=True)
-              + glob.glob("sherpa-onnx-*/**/*.exe", recursive=True)
-          )
+          # DLLs only: the demo exes' --help text mentions espeak-ng-data as a
+          # plain string, and only the DLLs are redistributed by tryll.
+          files = sorted(glob.glob("sherpa-onnx-*/**/*.dll", recursive=True))
           # Do not scan the downloaded onnxruntime SDK dir, only the package.
           files = [f for f in files if not f.startswith("onnxruntime-")]
           if not files:
