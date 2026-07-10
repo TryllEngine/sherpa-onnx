@@ -16,13 +16,18 @@
 #include "rawfile/raw_file_manager.h"
 #endif
 
+// These impls require eSpeak NG (GPLv3) via their lexicon frontends
+#if !SHERPA_ONNX_TTS_WITHOUT_ESPEAK
 #include "sherpa-onnx/csrc/offline-tts-kitten-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-kokoro-impl.h"
+#endif
 #include "sherpa-onnx/csrc/offline-tts-matcha-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-pocket-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-supertonic-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-vits-impl.h"
+#if !SHERPA_ONNX_TTS_WITHOUT_ESPEAK
 #include "sherpa-onnx/csrc/offline-tts-zipvoice-impl.h"
+#endif
 
 namespace sherpa_onnx {
 
@@ -46,11 +51,32 @@ std::unique_ptr<OfflineTtsImpl> OfflineTtsImpl::Create(
     return std::make_unique<OfflineTtsMatchaImpl>(config);
   } else if (!config.model.zipvoice.encoder.empty() &&
              !config.model.zipvoice.decoder.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "ZipVoice requires eSpeak NG (GPLv3), which is not available in "
+        "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsZipvoiceImpl>(config);
+#endif
   } else if (!config.model.kokoro.model.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "Kokoro requires eSpeak NG (GPLv3), which is not available in this "
+        "build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsKokoroImpl>(config);
+#endif
   } else if (!config.model.kitten.model.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "KittenTTS requires eSpeak NG (GPLv3), which is not available in "
+        "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsKittenImpl>(config);
+#endif
   } else if (!config.model.pocket.lm_flow.empty()) {
     return std::make_unique<OfflineTtsPocketImpl>(config);
   } else if (!config.model.supertonic.tts_json.empty()) {
@@ -71,11 +97,32 @@ std::unique_ptr<OfflineTtsImpl> OfflineTtsImpl::Create(
     return std::make_unique<OfflineTtsMatchaImpl>(mgr, config);
   } else if (!config.model.zipvoice.encoder.empty() &&
              !config.model.zipvoice.decoder.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "ZipVoice requires eSpeak NG (GPLv3), which is not available in "
+        "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsZipvoiceImpl>(mgr, config);
+#endif
   } else if (!config.model.kokoro.model.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "Kokoro requires eSpeak NG (GPLv3), which is not available in this "
+        "build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsKokoroImpl>(mgr, config);
+#endif
   } else if (!config.model.kitten.model.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    SHERPA_ONNX_LOGE(
+        "KittenTTS requires eSpeak NG (GPLv3), which is not available in "
+        "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+    return {};
+#else
     return std::make_unique<OfflineTtsKittenImpl>(mgr, config);
+#endif
   } else if (!config.model.pocket.lm_flow.empty()) {
     return std::make_unique<OfflineTtsPocketImpl>(mgr, config);
   } else if (!config.model.supertonic.tts_json.empty()) {

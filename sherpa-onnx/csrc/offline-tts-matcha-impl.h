@@ -15,6 +15,7 @@
 #include "kaldifst/csrc/kaldi-fst-io.h"
 #include "kaldifst/csrc/text-normalizer.h"
 #include "sherpa-onnx/csrc/character-lexicon.h"
+#include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/fst-utils.h"
 #include "sherpa-onnx/csrc/lexicon.h"
 #include "sherpa-onnx/csrc/macros.h"
@@ -405,6 +406,26 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     // from assets to disk
     const auto &meta_data = model_->GetMetaData();
 
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    if (meta_data.is_zh_en) {
+      SHERPA_ONNX_LOGE(
+          "This Matcha model requires eSpeak NG (GPLv3), which is not "
+          "available in this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+      SHERPA_ONNX_EXIT(-1);
+    } else if (meta_data.jieba) {
+      frontend_ = std::make_unique<CharacterLexicon>(
+          mgr, config_.model.matcha.lexicon, config_.model.matcha.tokens,
+          config_.model.debug);
+    } else if (meta_data.has_espeak) {
+      SHERPA_ONNX_LOGE(
+          "This Matcha model requires eSpeak NG (GPLv3), which is not "
+          "available in this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+      SHERPA_ONNX_EXIT(-1);
+    } else {
+      SHERPA_ONNX_LOGE("Unsupported matcha tts model. Please ask for help");
+      SHERPA_ONNX_EXIT(-1);
+    }
+#else
     if (meta_data.is_zh_en) {
       frontend_ = std::make_unique<MatchaTtsLexicon>(
           mgr, config_.model.matcha.lexicon, config_.model.matcha.tokens,
@@ -421,11 +442,32 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
       SHERPA_ONNX_LOGE("Unsupported matcha tts model. Please ask for help");
       SHERPA_ONNX_EXIT(-1);
     }
+#endif
   }
 
   void InitFrontend() {
     const auto &meta_data = model_->GetMetaData();
 
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+    if (meta_data.is_zh_en) {
+      SHERPA_ONNX_LOGE(
+          "This Matcha model requires eSpeak NG (GPLv3), which is not "
+          "available in this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+      SHERPA_ONNX_EXIT(-1);
+    } else if (meta_data.jieba) {
+      frontend_ = std::make_unique<CharacterLexicon>(
+          config_.model.matcha.lexicon, config_.model.matcha.tokens,
+          config_.model.debug);
+    } else if (meta_data.has_espeak) {
+      SHERPA_ONNX_LOGE(
+          "This Matcha model requires eSpeak NG (GPLv3), which is not "
+          "available in this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1).");
+      SHERPA_ONNX_EXIT(-1);
+    } else {
+      SHERPA_ONNX_LOGE("Unsupported matcha tts model. Please ask for help");
+      SHERPA_ONNX_EXIT(-1);
+    }
+#else
     if (meta_data.is_zh_en) {
       frontend_ = std::make_unique<MatchaTtsLexicon>(
           config_.model.matcha.lexicon, config_.model.matcha.tokens,
@@ -442,6 +484,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
       SHERPA_ONNX_LOGE("Unsupported matcha tts model. Please ask for help");
       SHERPA_ONNX_EXIT(-1);
     }
+#endif
   }
 
   GeneratedAudio Process(const std::vector<std::vector<int64_t>> &tokens,

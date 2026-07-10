@@ -381,9 +381,18 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     } else if ((meta_data.is_piper || meta_data.is_coqui ||
                 meta_data.is_icefall) &&
                !config_.model.vits.data_dir.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+      SHERPA_ONNX_LOGE(
+          "This model requires eSpeak NG (GPLv3), which is not available in "
+          "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1). Please use "
+          "--vits-lexicon instead of --vits-data-dir, or a build with "
+          "eSpeak NG enabled.");
+      SHERPA_ONNX_EXIT(-1);
+#else
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
           mgr, config_.model.vits.tokens, config_.model.vits.data_dir,
           meta_data);
+#endif
     } else {
       if (config_.model.vits.lexicon.empty()) {
         SHERPA_ONNX_LOGE(
@@ -419,9 +428,18 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     } else if ((meta_data.is_piper || meta_data.is_coqui ||
                 meta_data.is_icefall) &&
                !config_.model.vits.data_dir.empty()) {
+#if SHERPA_ONNX_TTS_WITHOUT_ESPEAK
+      SHERPA_ONNX_LOGE(
+          "This model requires eSpeak NG (GPLv3), which is not available in "
+          "this build (SHERPA_ONNX_TTS_WITHOUT_ESPEAK=1). Please use "
+          "--vits-lexicon instead of --vits-data-dir, or a build with "
+          "eSpeak NG enabled.");
+      SHERPA_ONNX_EXIT(-1);
+#else
       frontend_ = std::make_unique<PiperPhonemizeLexicon>(
           config_.model.vits.tokens, config_.model.vits.data_dir,
           model_->GetMetaData());
+#endif
     } else {
       if (config_.model.vits.lexicon.empty()) {
         SHERPA_ONNX_LOGE(

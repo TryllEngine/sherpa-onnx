@@ -272,9 +272,7 @@ if(SHERPA_ONNX_ENABLE_TTS)
   list(APPEND sources
     character-lexicon.cc
     hifigan-vocoder.cc
-    kokoro-multi-lang-lexicon.cc
     lexicon.cc
-    matcha-tts-lexicon.cc
     melo-tts-lexicon.cc
     offline-tts-character-frontend.cc
     offline-tts-frontend.cc
@@ -297,11 +295,20 @@ if(SHERPA_ONNX_ENABLE_TTS)
     offline-tts-zipvoice-model-config.cc
     offline-tts-zipvoice-model.cc
     offline-tts.cc
-    piper-phonemize-lexicon.cc
     sentence-piece-tokenizer.cc
     vocoder.cc
     vocos-vocoder.cc
   )
+
+  # These files require eSpeak NG (GPLv3). Model families depending on them
+  # fail at load time with a clear error; see offline-tts-impl.cc
+  if(NOT SHERPA_ONNX_TTS_WITHOUT_ESPEAK)
+    list(APPEND sources
+      kokoro-multi-lang-lexicon.cc
+      matcha-tts-lexicon.cc
+      piper-phonemize-lexicon.cc
+    )
+  endif()
 endif()
 
 list(APPEND sources
@@ -460,7 +467,7 @@ endif()
 
 target_link_libraries(sherpa-onnx-core fstfar fst)
 
-if(SHERPA_ONNX_ENABLE_TTS)
+if(SHERPA_ONNX_ENABLE_TTS AND NOT SHERPA_ONNX_TTS_WITHOUT_ESPEAK)
   target_link_libraries(sherpa-onnx-core
     piper_phonemize)
 endif()
@@ -827,8 +834,12 @@ if(SHERPA_ONNX_ENABLE_TESTS)
   if(SHERPA_ONNX_ENABLE_TTS)
     list(APPEND sherpa_onnx_test_srcs
       sentence-piece-tokenizer-test.cc
-      piper-phonemize-test.cc
     )
+    if(NOT SHERPA_ONNX_TTS_WITHOUT_ESPEAK)
+      list(APPEND sherpa_onnx_test_srcs
+        piper-phonemize-test.cc
+      )
+    endif()
   endif()
 
   if(SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION)
