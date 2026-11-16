@@ -7,6 +7,10 @@ name: tryll-release
 # Package names are derived from the git tag (e.g. v1.13.2-tryll.1):
 #   sherpa-onnx-<tag>-win-x64-shared-MD-Release.tar.bz2
 #   sherpa-onnx-<tag>-win-x64-cuda.tar.bz2
+#   sherpa-onnx-<tag>-osx-arm64-shared.tar.bz2   (macOS 14+, Apple Silicon; from v1.13.2-tryll.2)
+#
+# Never re-run or move a published tag: tryll-mono pins each asset by SHA-256.
+# Uploads use overwrite: false, so a re-run cannot replace a pinned asset.
 
 on:
   push:
@@ -152,6 +156,184 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           file_glob: true
-          overwrite: true
+          overwrite: false
           file: sherpa-onnx-*-win-x64-*.tar.bz2
           repo_token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos-arm64:
+    name: osx-arm64 shared (espeak-free)
+    runs-on: macos-26
+    permissions:
+      contents: write
+    env:
+      # Tag runs use the tag; workflow_dispatch runs build under the next tag name.
+      TRYLL_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.13.2-tryll.2' }}
+      ORT_LIB: libonnxruntime.1.24.4.dylib
+      MIN_OS: "14.0"
+      # Same markers as the Windows legs' gate.
+      MARKERS: "espeak_Initialize|espeak_TextToPhonemes|espeak-ng-data"
+    steps:
+      - name: Refuse the tryll.1 tag
+        if: github.ref_name == 'v1.13.2-tryll.1'
+        shell: bash
+        run: |
+          echo "::error::Never re-run v1.13.2-tryll.1: it would replace the pinned Windows tarballs. Use v1.13.2-tryll.2."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D CMAKE_OSX_ARCHITECTURES=arm64 \
+            -D CMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -D CMAKE_INSTALL_PREFIX="$PWD/build/install" \
+            -D BUILD_SHARED_LIBS=ON \
+            -D SHERPA_ONNX_ENABLE_TTS=ON \
+            -D SHERPA_ONNX_TTS_WITHOUT_ESPEAK=ON \
+            -D SHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
+            -D SHERPA_ONNX_ENABLE_BINARY=OFF \
+            -D SHERPA_ONNX_ENABLE_PYTHON=OFF \
+            -D SHERPA_ONNX_ENABLE_TESTS=OFF \
+            -D SHERPA_ONNX_ENABLE_CHECK=OFF \
+            -D SHERPA_ONNX_ENABLE_WEBSOCKET=OFF \
+            -D SHERPA_ONNX_ENABLE_JNI=OFF \
+            -D SHERPA_ONNX_ENABLE_GPU=OFF \
+            -D SHERPA_ONNX_ENABLE_C_API=ON \
+            -D SHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF
+
+      - name: Build and install
+        shell: bash
+        run: |
+          cmake --build build --config Release -j "$(sysctl -n hw.ncpu)"
+          cmake --install build --config Release
+
+      - name: Licence gate (no eSpeak / piper code in any dylib)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          libs=(build/install/lib/*.dylib)
+          if [ ${#libs[@]} -eq 0 ]; then
+            echo "::error::No *.dylib under build/install/lib; the gate has nothing to scan."
+            exit 1
+          fi
+          fail=0
+          for f in "${libs[@]}"; do
+            [ -L "$f" ] && continue
+            echo "scan $f"
+            if strings -a "$f" | grep -E -q "$MARKERS"; then
+              echo "::error::GPL eSpeak/piper marker found in $f"
+              strings -a "$f" | grep -E "$MARKERS" | head -n 20
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Check dylibs (arch, min OS, install names, rpath)
+        shell: bash
+        run: |
+          set -euo pipefail
+          lib=build/install/lib
+          c="$lib/libsherpa-onnx-c-api.dylib"
+          ort="$lib/$ORT_LIB"
+          for f in "$c" "$ort"; do
+            if [ ! -f "$f" ] || [ -L "$f" ]; then
+              echo "::error::$f is missing or a symlink"; exit 1
+            fi
+          done
+
+          minos() {
+            otool -l "$1" | awk '
+              /LC_BUILD_VERSION/ {b=1}
+              b && $1=="minos" {print $2; exit}
+              /LC_VERSION_MIN_MACOSX/ {v=1}
+              v && $1=="version" {print $2; exit}'
+          }
+          for f in "$c" "$ort"; do
+            archs="$(lipo -archs "$f")"
+            if [ "$archs" != "arm64" ]; then
+              echo "::error::$f archs '$archs' (want arm64 only)"; exit 1
+            fi
+            m="$(minos "$f")"
+            if [ "$(printf '%s\n%s\n' "$m" "$MIN_OS" | sort -V | tail -n1)" != "$MIN_OS" ]; then
+              echo "::error::$f minos $m is above $MIN_OS"; exit 1
+            fi
+            echo "$f: archs=$archs minos=$m id=$(otool -D "$f" | tail -n1)"
+          done
+
+          # The C API may depend on system libraries and the versioned ORT only.
+          self_id="$(otool -D "$c" | tail -n1)"
+          otool -L "$c"
+          bad=0
+          while read -r dep _; do
+            case "$dep" in
+              "$self_id"|/usr/lib/*|/System/*) ;;
+              "@rpath/$ORT_LIB") ;;
+              *) echo "::error::unexpected dependency of $c: $dep"; bad=1 ;;
+            esac
+          done < <(otool -L "$c" | tail -n +2)
+          [ $bad -eq 0 ]
+          if ! otool -L "$c" | grep -q "@rpath/$ORT_LIB"; then
+            echo "::error::$c does not load @rpath/$ORT_LIB"; exit 1
+          fi
+
+          # Tryll stages both files side by side and relies on @loader_path.
+          if ! otool -l "$c" | grep -A2 LC_RPATH | grep -q "path @loader_path "; then
+            install_name_tool -add_rpath @loader_path "$c"
+            codesign --force --sign - "$c"
+          fi
+          otool -l "$c" | grep -A2 LC_RPATH
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dst="sherpa-onnx-${TRYLL_TAG}-osx-arm64-shared"
+          rm -rf "$dst" "$dst.tar.bz2"
+          mkdir -p "$dst/lib" "$dst/include" "$dst/licenses"
+          cp build/install/lib/libsherpa-onnx-c-api.dylib "$dst/lib/"
+          cp "build/install/lib/$ORT_LIB" "$dst/lib/"
+          cp -R build/install/include/sherpa-onnx "$dst/include/"
+          test -f "$dst/include/sherpa-onnx/c-api/c-api.h"
+          cp LICENSE "$dst/LICENSE"
+
+          ort_lic="$(find build/_deps -maxdepth 3 -path '*onnxruntime*' -name LICENSE -print -quit)"
+          ort_tpn="$(find build/_deps -maxdepth 3 -path '*onnxruntime*' -name ThirdPartyNotices.txt -print -quit)"
+          if [ -z "$ort_lic" ]; then
+            echo "::error::ONNX Runtime LICENSE not found under build/_deps"; exit 1
+          fi
+          cp "$ort_lic" "$dst/licenses/onnxruntime-LICENSE"
+          if [ -n "$ort_tpn" ]; then
+            cp "$ort_tpn" "$dst/licenses/onnxruntime-ThirdPartyNotices.txt"
+          fi
+
+          tar cjf "$dst.tar.bz2" "$dst"
+          shasum -a 256 "$dst.tar.bz2" | tee "$dst.tar.bz2.sha256"
+          {
+            echo "### $dst.tar.bz2"
+            echo '```'
+            cat "$dst.tar.bz2.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-osx-arm64-shared
+          path: |
+            sherpa-onnx-*-osx-arm64-shared.tar.bz2
+            sherpa-onnx-*-osx-arm64-shared.tar.bz2.sha256
+          retention-days: 7
+
+      # Releases only on a tag run. overwrite: false so a re-run can never replace
+      # a published (pinned) asset.
+      - name: Upload to the tag's release
+        if: github.ref_type == 'tag'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: sherpa-onnx-*-osx-arm64-shared.tar.bz2
+          file_glob: true
+          tag: ${{ github.ref_name }}
+          overwrite: false
